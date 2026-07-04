@@ -96,6 +96,28 @@ tr.cool{border-left:3px solid #3b82f6}
 .csv-import-area{margin-top:16px;padding:16px;border:2px dashed #475569;border-radius:8px;text-align:center;cursor:pointer}
 .csv-import-area:hover{border-color:#3b82f6;background:#3b82f610}
 .csv-import-area input{display:none}
+.tax-btn{background:#7c3aed20;color:#a78bfa;border:1px solid #7c3aed40;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:0.68rem;font-weight:600;transition:all 0.15s;white-space:nowrap}
+.tax-btn:hover{background:#7c3aed40;color:#e9d5ff;border-color:#7c3aed}
+.tax-btn-paid{background:#dc262620;color:#f87171;border-color:#dc262640}
+.tax-btn-paid:hover{background:#dc262640;color:#fca5a5}
+.tax-btn-unpaid{background:#05966920;color:#34d399;border-color:#05966940}
+.tax-btn-unpaid:hover{background:#05966940;color:#6ee7b7}
+.tax-batch-btn{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;transition:all 0.15s;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.tax-batch-btn:hover{background:linear-gradient(135deg,#8b5cf6,#7c3aed);transform:translateY(-1px)}
+.tax-cell{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.tax-cell .tax-actions{display:flex;gap:3px}
+.tax-badge{display:inline-block;font-size:0.6rem;padding:2px 6px;border-radius:3px;font-weight:700;vertical-align:middle}
+.tax-badge-paid{background:#dc262630;color:#f87171}
+.tax-badge-unpaid{background:#05966930;color:#34d399}
+.tax-badge-unchecked{background:#f59e0b20;color:#fbbf24}
+.tax-badge-na{background:#64748b20;color:#64748b}
+.tax-progress{font-size:0.68rem;color:#94a3b8;display:flex;align-items:center;gap:6px}
+.tax-progress-bar{width:80px;height:4px;background:#334155;border-radius:2px;overflow:hidden;display:inline-block}
+.tax-progress-fill{height:100%;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:2px;transition:width 0.3s}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:#1e293b;border:1px solid #7c3aed;color:#e2e8f0;padding:12px 20px;border-radius:10px;z-index:9999;font-size:0.82rem;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:transform 0.3s ease;display:flex;align-items:center;gap:10px;max-width:480px}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast .toast-icon{font-size:1.2rem}
+.toast .toast-text strong{color:#a78bfa}
 @media(max-width:768px){.sidebar{width:60px}.county-item .county-name{display:none}.county-item .county-badge{font-size:0.6rem;padding:1px 4px}.sidebar-header h2 span{display:none}.sidebar-total{display:none}}
 </style>
 </head>
@@ -127,6 +149,11 @@ tr.cool{border-left:3px solid #3b82f6}
     <div><label>Search:</label><input type="text" id="filterSearch" placeholder="Owner, address, parcel..." style="width:160px" oninput="applyFilters()"></div>
     <div><label><input type="checkbox" id="filterResOnly" onchange="applyFilters()"> Residential Only</label></div>
     <div><label><input type="checkbox" id="filterSameOwner" onchange="applyFilters()"> Same Owner Only</label></div>
+    <div id="taxFilterWrap" style="display:none"><label><input type="checkbox" id="filterHidePaid" checked onchange="applyFilters()"> Hide Paid Taxes</label></div>
+    <div id="taxCheckBtnWrap" style="display:none;margin-left:auto;display:flex;align-items:center;gap:10px">
+      <span id="taxProgress" class="tax-progress"></span>
+      <button class="tax-batch-btn" onclick="checkAllTaxes()">&#128176; Check All Taxes</button>
+    </div>
   </div>
 
   <div class="status-bar">
@@ -153,6 +180,7 @@ tr.cool{border-left:3px solid #3b82f6}
       <th data-col="bid_amount" data-type="num">Bid Amount</th>
       <th data-col="real_ratio" data-type="num">Overbid Ratio</th>
       <th data-col="bid_premium" data-type="num">Premium</th>
+      <th>Tax Status</th>
       <th>Actions</th>
     </tr></thead>
     <tbody id="tableBody"></tbody>
@@ -163,6 +191,8 @@ tr.cool{border-left:3px solid #3b82f6}
   <div id="noDataArea" style="display:none"></div>
 </main>
 </div>
+
+<div class="toast" id="toast"><span class="toast-icon"></span><span class="toast-text"></span></div>
 
 <div class="modal-overlay" id="propModal">
 <div class="modal">
@@ -377,7 +407,15 @@ function getFiltered() {
   var search = document.getElementById('filterSearch').value.toLowerCase();
   var resOnly = document.getElementById('filterResOnly').checked;
   var sameOwnerOnly = document.getElementById('filterSameOwner').checked;
+  var hidePaid = document.getElementById('filterHidePaid') && document.getElementById('filterHidePaid').checked;
   var filtered = leads.slice();
+  // Filter out leads where taxes have been paid (AA County)
+  if (hidePaid) {
+    filtered = filtered.filter(function(r) {
+      if (r.county_code !== '02') return true;
+      return getTaxStatus(r.parcel) !== 'paid';
+    });
+  }
   if (yr !== 'all') filtered = filtered.filter(function(r) { return String(r.year) === yr; });
   if (resOnly) filtered = filtered.filter(function(r) { return r.use_code && r.use_code.toLowerCase().indexOf('resid') >= 0; });
   if (sameOwnerOnly) filtered = filtered.filter(function(r) { return r.owner_status === 'same'; });
@@ -419,7 +457,7 @@ function renderTable(filtered) {
   var html = '';
   document.getElementById('recordCount').textContent = filtered.length;
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="no-results">No matching leads found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="no-results">No matching leads found</td></tr>';
     return;
   }
   filtered.forEach(function(r, i) {
@@ -458,6 +496,19 @@ function renderTable(filtered) {
     html += '<td>$' + r.bid_amount.toLocaleString() + '</td>';
     html += '<td>' + ratioHtml + '</td>';
     html += '<td>$' + r.bid_premium.toLocaleString() + '</td>';
+    // Tax status column
+    if (r.county_code === '02') {
+      var ts = getTaxStatus(r.parcel);
+      if (ts === 'paid') {
+        html += '<td><div class="tax-cell"><span class="tax-badge tax-badge-paid">TAXES PAID</span><div class="tax-actions"><button class="tax-btn tax-btn-unpaid" onclick="markTax(\'' + r.parcel + '\',\'unpaid\')" title="Change to unpaid" style="font-size:0.58rem;padding:1px 5px">&#8634; Undo</button></div></div></td>';
+      } else if (ts === 'unpaid') {
+        html += '<td><div class="tax-cell"><span class="tax-badge tax-badge-unpaid">UNPAID</span><div class="tax-actions"><button class="tax-btn" onclick="checkTaxStatus(' + r.idx + ')" title="Re-check on county site" style="font-size:0.58rem;padding:1px 5px">&#128269; Re-check</button><button class="tax-btn tax-btn-paid" onclick="markTax(\'' + r.parcel + '\',\'paid\')" style="font-size:0.58rem;padding:1px 5px">Mark Paid</button></div></div></td>';
+      } else {
+        html += '<td><div class="tax-cell"><button class="tax-btn" onclick="checkTaxStatus(' + r.idx + ')" title="Open AA County tax site &amp; copy parcel ID">&#128176; Check</button><div class="tax-actions"><button class="tax-btn tax-btn-paid" onclick="markTax(\'' + r.parcel + '\',\'paid\')" style="font-size:0.58rem;padding:1px 5px">Paid</button><button class="tax-btn tax-btn-unpaid" onclick="markTax(\'' + r.parcel + '\',\'unpaid\')" style="font-size:0.58rem;padding:1px 5px">Unpaid</button></div></div></td>';
+      }
+    } else {
+      html += '<td><span class="tax-badge tax-badge-na">N/A</span></td>';
+    }
     html += '<td><div class="btn-row"><button class="action-btn" onclick="openPropModal(' + r.idx + ')">&#128200; Property</button><button class="action-btn" onclick="openCourt(' + r.idx + ')">&#9878; Court</button></div></td>';
     html += '</tr>';
   });
@@ -536,6 +587,20 @@ function renderPropModal(lead) {
   }
   var countyName = (MD_COUNTIES[lead.county_code] || '').replace(/ /g,'+').replace(/'/g,'');
   h += '<a href="https://mdcourts.gov/clerksearch" target="_blank" class="action-btn" style="text-decoration:none;padding:8px 14px">&#9878; Court Search</a>';
+  if (lead.county_code === '02') {
+    var modalTs = getTaxStatus(lead.parcel);
+    h += '<button class="action-btn" style="padding:8px 14px;background:#7c3aed20;color:#a78bfa;border-color:#7c3aed40" onclick="checkTaxStatus(' + lead.idx + ')">&#128176; Check Tax Bill</button>';
+    if (modalTs === 'paid') {
+      h += '<span class="tax-badge tax-badge-paid" style="padding:8px 14px;font-size:0.75rem">TAXES PAID</span>';
+      h += '<button class="action-btn" style="padding:8px 14px;background:#05966920;color:#34d399;border-color:#05966940" onclick="markTax(\'' + lead.parcel + '\',\'unpaid\');closeModal()">&#8634; Mark Unpaid</button>';
+    } else if (modalTs === 'unpaid') {
+      h += '<span class="tax-badge tax-badge-unpaid" style="padding:8px 14px;font-size:0.75rem">UNPAID - GOOD LEAD</span>';
+      h += '<button class="action-btn" style="padding:8px 14px;background:#dc262620;color:#f87171;border-color:#dc262640" onclick="markTax(\'' + lead.parcel + '\',\'paid\');closeModal()">Mark Paid</button>';
+    } else {
+      h += '<button class="action-btn" style="padding:8px 14px;background:#dc262620;color:#f87171;border-color:#dc262640" onclick="markTax(\'' + lead.parcel + '\',\'paid\');closeModal()">&#128308; Mark Paid</button>';
+      h += '<button class="action-btn" style="padding:8px 14px;background:#05966920;color:#34d399;border-color:#05966940" onclick="markTax(\'' + lead.parcel + '\',\'unpaid\');closeModal()">&#9989; Mark Unpaid</button>';
+    }
+  }
   h += '</div>';
   document.getElementById('modalBody').innerHTML = h;
 }
@@ -556,6 +621,131 @@ document.getElementById('propModal').addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeModal();
 });
+
+// === TAX STATUS CHECK (AA County - Tyler Technologies Munis) ===
+var AA_TAX_URL = 'https://aacounty.munisselfservice.com/citizens/RealEstate/Default.aspx';
+var TAX_STORAGE_KEY = 'md_tax_status_';
+
+function showToast(icon, message, duration) {
+  var toast = document.getElementById('toast');
+  toast.querySelector('.toast-icon').innerHTML = icon;
+  toast.querySelector('.toast-text').innerHTML = message;
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function() { toast.classList.remove('show'); }, duration || 4000);
+}
+
+// localStorage-based tax status: 'paid', 'unpaid', or null (unchecked)
+function getTaxStatus(parcelId) {
+  try { return localStorage.getItem(TAX_STORAGE_KEY + parcelId) || null; } catch(e) { return null; }
+}
+
+function setTaxStatus(parcelId, status) {
+  try {
+    if (status) localStorage.setItem(TAX_STORAGE_KEY + parcelId, status);
+    else localStorage.removeItem(TAX_STORAGE_KEY + parcelId);
+  } catch(e) {}
+}
+
+function markTax(parcelId, status) {
+  setTaxStatus(parcelId, status);
+  if (status === 'paid') {
+    showToast('&#128308;', 'Parcel <strong>' + parcelId + '</strong> marked as <strong>TAXES PAID</strong> — lead removed');
+  } else if (status === 'unpaid') {
+    showToast('&#9989;', 'Parcel <strong>' + parcelId + '</strong> marked as <strong>UNPAID</strong> — good lead!');
+  }
+  updateTaxProgress();
+  applyFilters();
+}
+
+function checkTaxStatus(idx) {
+  var lead = leads[idx];
+  if (!lead) return;
+  var parcelId = String(lead.parcel).replace(/[^0-9]/g, '');
+
+  // Copy parcel ID to clipboard
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(parcelId).then(function() {
+      showToast('&#128203;', '<strong>' + parcelId + '</strong> copied! Paste in the Parcel ID field, click Search, then View Bill to check balance. Return here to mark Paid or Unpaid.');
+    }).catch(function() {
+      fallbackCopy(parcelId);
+    });
+  } else {
+    fallbackCopy(parcelId);
+  }
+
+  // Open AA County tax search in new tab
+  window.open(AA_TAX_URL, '_blank');
+}
+
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); showToast('&#128203;', '<strong>' + text + '</strong> copied! Paste in the Parcel ID field on the tax site.'); }
+  catch(e) { showToast('&#9888;', 'Parcel ID: <strong>' + text + '</strong> — copy it manually'); }
+  document.body.removeChild(ta);
+}
+
+function checkAllTaxes() {
+  // Get all unchecked AA County leads
+  var unchecked = getFiltered().filter(function(r) { return r.county_code === '02' && !getTaxStatus(r.parcel); });
+  if (unchecked.length === 0) {
+    showToast('&#9989;', 'All visible AA County leads have been checked!');
+    return;
+  }
+
+  // Copy the first unchecked parcel ID
+  var firstParcel = String(unchecked[0].parcel).replace(/[^0-9]/g, '');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(firstParcel);
+  }
+
+  // Open the tax search page
+  window.open(AA_TAX_URL, '_blank');
+
+  showToast('&#128203;', '<strong>' + unchecked.length + '</strong> unchecked leads remaining. First parcel <strong>' + firstParcel + '</strong> copied to clipboard. Check each one and mark Paid/Unpaid.', 6000);
+}
+
+function clearAllTaxStatuses() {
+  if (!confirm('Clear all saved tax statuses for AA County? This cannot be undone.')) return;
+  leads.forEach(function(l) {
+    if (l.county_code === '02') {
+      try { localStorage.removeItem(TAX_STORAGE_KEY + l.parcel); } catch(e) {}
+    }
+  });
+  showToast('&#128465;', 'All AA County tax statuses cleared');
+  updateTaxProgress();
+  applyFilters();
+}
+
+function updateTaxProgress() {
+  var progEl = document.getElementById('taxProgress');
+  if (!progEl || currentCountyCode !== '02') return;
+  var total = leads.length;
+  var checked = 0, paid = 0, unpaid = 0;
+  leads.forEach(function(l) {
+    var s = getTaxStatus(l.parcel);
+    if (s === 'paid') { checked++; paid++; }
+    else if (s === 'unpaid') { checked++; unpaid++; }
+  });
+  var pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  progEl.innerHTML = '<span class="tax-progress-bar"><span class="tax-progress-fill" style="width:' + pct + '%"></span></span> ' +
+    checked + '/' + total + ' checked (' + paid + ' paid, ' + unpaid + ' unpaid)';
+}
+
+// Show/hide tax-related controls based on current county
+function updateTaxCheckVisibility() {
+  var isAA = currentCountyCode === '02';
+  var wrap = document.getElementById('taxCheckBtnWrap');
+  var filterWrap = document.getElementById('taxFilterWrap');
+  if (wrap) wrap.style.display = isAA ? 'flex' : 'none';
+  if (filterWrap) filterWrap.style.display = isAA ? '' : 'none';
+  if (isAA) updateTaxProgress();
+}
 
 // === COUNTY SWITCHING ===
 function buildCountyList() {
@@ -626,6 +816,7 @@ function switchCounty(code) {
     
     initLeads();
     applyFilters();
+    updateTaxCheckVisibility();
     setTimeout(function() { enrichAbort = false; enrichAllParcels(); }, 300);
   } else {
     // No data - show info card
@@ -636,7 +827,8 @@ function switchCounty(code) {
     document.querySelector('.stats-row').style.display = 'none';
     document.getElementById('recordCount').textContent = '0';
     document.getElementById('dataSource').textContent = 'No data loaded';
-    
+    updateTaxCheckVisibility();
+
     var h = '<div class="no-data-card">';
     h += '<h3>' + MD_COUNTIES[code] + ' County</h3>';
     h += '<p>Tax sale data for this county has not been loaded yet. You can import data using a CSV file or check the county website for available records.</p>';
@@ -694,6 +886,7 @@ function handleCSV(input, countyCode) {
 buildCountyList();
 initLeads();
 applyFilters();
+updateTaxCheckVisibility();
 enrichAllParcels();
 </script>
 </body>
